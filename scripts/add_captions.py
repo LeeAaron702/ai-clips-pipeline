@@ -262,6 +262,14 @@ def render_top_hook(img: Image.Image, text: str, font: ImageFont.FreeTypeFont):
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
 
+    # Auto-reduce font if too wide
+    if tw > WIDTH - 60:
+        ratio = (WIDTH - 60) / tw
+        font = load_font(max(36, int(TOP_HOOK_FONT_SIZE * ratio)))
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+
     # Center horizontally
     x = (WIDTH - tw) // 2
     y = TOP_HOOK_Y
