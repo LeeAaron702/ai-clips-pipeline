@@ -179,6 +179,11 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
             top_hook,
         ))
 
+        # Garbage collection: delete raw cuts (keep captioned for A/B, trending for posting)
+        import os as _os
+        if captioned_path.exists() and clip_path.exists() and str(clip_path) != str(captioned_path):
+            _os.unlink(str(clip_path))
+
         db.commit()
         results.append({
             "path": str(captioned_path),
