@@ -150,12 +150,12 @@ def generate_hook_heuristic(words: list[dict], episode_name: str = "") -> str:
     import hashlib
     # Rotate through varied fallbacks based on transcript content
     fallbacks = [
-        "THIS DOESN"T END WELL...",
+        "THIS DOESN'T END WELL...",
         "NOBODY SAW THIS COMING",
         "THINGS ARE ABOUT TO GO WRONG",
         "THIS IS WHERE IT GETS GOOD",
         "WATCH WHAT HAPPENS NEXT",
-        "YOU WON"T BELIEVE THIS",
+        "YOU WONT BELIEVE THIS",
         "THEY HAD NO IDEA...",
         "THIS CHANGES EVERYTHING",
         "ABSOLUTE CHAOS INCOMING",

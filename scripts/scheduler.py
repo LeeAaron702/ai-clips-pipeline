@@ -27,6 +27,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'scripts'))
 DB_PATH = PROJECT_ROOT / "data" / "pipeline.db"
 CONFIG_PATH = PROJECT_ROOT / "config.json"
 STATUS_PATH = PROJECT_ROOT / "data" / "scheduler_status.json"
@@ -34,12 +35,13 @@ LOG_DIR = PROJECT_ROOT / "logs"
 
 TZ = ZoneInfo("America/Los_Angeles")
 
-# Posting schedule (PT times)
-# A/B test: trending at prime times, captioned (no trending audio) at off-peak
-POST_TIMES_TRENDING = ["07:00", "15:00", "23:00"]  # Every 8hrs, trending
-POST_TIMES_CAPTIONED = ["11:00", "19:00"]  # Off-peak, captioned only (A/B)
-POST_TIMES = sorted(POST_TIMES_TRENDING + POST_TIMES_CAPTIONED)
-MIN_POST_INTERVAL_MINUTES = 90
+# Posting schedule (PT times) - 10 posts/day, ~2.4hrs apart
+# Heavy during peak hours (6pm-midnight), spread during day
+POST_TIMES = [
+    "06:00", "08:30", "10:30", "12:30", "14:30",
+    "16:30", "18:30", "20:00", "21:30", "23:00",
+]
+MIN_POST_INTERVAL_MINUTES = 60
 
 
 def load_config():
@@ -101,18 +103,7 @@ def get_stats():
 
 def post_clip(clip) -> bool:
     """Post a clip to TikTok using upload_tiktok.py."""
-    # A/B test: use trending version at prime times, captioned at off-peak
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    now_pt = datetime.now(ZoneInfo("America/Los_Angeles"))
-    current_time = now_pt.strftime("%H:%M")
-    use_trending = any(abs(int(current_time.split(":")[0]) - int(t.split(":")[0])) <= 1 for t in POST_TIMES_TRENDING)
-    if use_trending and clip["trending_video_path"] and Path(clip["trending_video_path"]).exists():
-        video_path = clip["trending_video_path"]
-        print(f"  A/B: Using TRENDING version (prime time)")
-    else:
-        video_path = clip["video_path"]
-        print(f"  A/B: Using CAPTIONED version (off-peak, no trending audio)")
+    video_path = clip["video_path"]
     if not Path(video_path).exists():
         print(f"ERROR: Video not found: {video_path}")
         return False
@@ -143,14 +134,19 @@ def post_clip(clip) -> bool:
         db.execute("UPDATE videos SET status='posted', posted_at=? WHERE id=?", (now, clip["id"]))
         db.execute("UPDATE scripts SET status='posted' WHERE id=?", (clip["script_id"],))
         print(f"  POSTED successfully")
-        # Garbage collection: delete posted clip files to free storage
-        for path_to_delete in [clip["trending_video_path"], clip["video_path"]]:
-            if path_to_delete and Path(path_to_delete).exists():
-                try:
-                    os.unlink(path_to_delete)
-                    print(f"  Deleted: {Path(path_to_delete).name}")
-                except Exception as e:
-                    print(f"  Could not delete {path_to_delete}: {e}")
+        # Update follower count after posting
+        try:
+            from fetch_followers import update_stats
+            update_stats()
+        except Exception as e:
+            print(f"  Could not fetch followers: {e}")
+        # Garbage collection: delete posted clip file to free storage
+        if clip["video_path"] and Path(clip["video_path"]).exists():
+            try:
+                os.unlink(clip["video_path"])
+                print(f"  Deleted: {Path(clip['video_path']).name}")
+            except Exception as e:
+                print(f"  Could not delete {clip['video_path']}: {e}")
     else:
         db.execute("UPDATE videos SET status='failed' WHERE id=?", (clip["id"],))
         print(f"  FAILED: {result.stdout[-200:]}")
@@ -160,8 +156,6 @@ def post_clip(clip) -> bool:
     # Send telegram notification
     notify = PROJECT_ROOT / "scripts" / "notify_telegram.sh"
     msg = f"{'Posted' if success else 'FAILED'}: {clip['hook_text'][:60]}"
-    if clip["trending_track"]:
-        msg += f"\nAudio: {clip['trending_track']}"
     subprocess.run(["bash", str(notify), "--message", msg], capture_output=True, env=env)
 
     return success
@@ -293,10 +287,8 @@ def show_queue():
     print(f"\nPost Queue ({len(queue)} clips):\n")
     for i, clip in enumerate(queue):
         ep = Path(clip["source_episode"]).stem if clip["source_episode"] else "?"
-        track = clip["trending_track"] or "none"
         hook = clip["top_hook"] or clip["hook_text"][:40] or "no hook"
         print(f"  {i+1}. [{clip['id']}] {ep} | {clip['duration_seconds']:.0f}s | {hook}")
-        print(f"     Audio: {track}")
 
 
 def main():

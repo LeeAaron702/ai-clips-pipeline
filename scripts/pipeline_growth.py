@@ -2,7 +2,7 @@
 """
 Phase 1 Growth Pipeline Orchestrator.
 Processes Top Gear episodes into captioned TikTok clips and posts them.
-Produces two versions: clean + trending audio overlay.
+Processes episodes into captioned TikTok clips with SFX.
 
 Usage:
     python3 scripts/pipeline_growth.py process input/episodes/S01E01.mp4
@@ -26,14 +26,12 @@ CONFIG_PATH = PROJECT_ROOT / "config.json"
 EPISODES_DIR = PROJECT_ROOT / "input" / "episodes"
 CLIPS_DIR = PROJECT_ROOT / "output" / "clips"
 CAPTIONED_DIR = PROJECT_ROOT / "output" / "captioned"
-TRENDING_DIR = PROJECT_ROOT / "output" / "trending"
 
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from transcribe import transcribe_episode
 from clip_selector import select_clips_heuristic
 from cut_clips import cut_clip
 from add_captions import add_captions, get_words_for_clip
-from add_trending_audio import add_trending_audio
 from generate_top_hook import generate_hook_from_transcript
 from add_effects import find_zoom_moments, add_sfx
 from generate_post_caption import generate_post_caption
@@ -69,7 +67,7 @@ def send_telegram(message: str):
 
 
 def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
-    """Full pipeline: transcribe -> select -> cut (face-tracked) -> caption -> trending audio -> DB."""
+    """Full pipeline: transcribe -> select -> cut (face-tracked) -> caption -> SFX -> DB."""
     episode_path = Path(episode_path).resolve()
     if not episode_path.exists():
         print(f"ERROR: Episode not found: {episode_path}")
@@ -101,18 +99,16 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         return []
     print(f"Selected {len(clips)} clips")
 
-    # Step 3-5: Cut, caption, trending audio
+    # Step 3-5: Cut, caption, SFX
     print(f"\n[3/5] Cutting {len(clips)} clips with face tracking...")
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     CAPTIONED_DIR.mkdir(parents=True, exist_ok=True)
-    TRENDING_DIR.mkdir(parents=True, exist_ok=True)
-
+    
     results = []
     for i, clip in enumerate(clips):
         clip_filename = f"{episode_name}_{clip['name']}.mp4"
         clip_path = CLIPS_DIR / clip_filename
         captioned_path = CAPTIONED_DIR / clip_filename
-        trending_path = TRENDING_DIR / clip_filename
 
         print(f"\n--- Clip {i+1}/{len(clips)}: {clip['start_sec']:.1f}s - {clip['end_sec']:.1f}s ---")
 
@@ -138,19 +134,19 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
             captioned_path = clip_path
 
         # Add SFX (whoosh + bass hits)
-        print(f"  [5/6] Adding sound effects...")
+        print(f"  [5/5] Adding sound effects...")
         zoom_moments = find_zoom_moments(words, max_zooms=4)
         if zoom_moments:
-            print(f"    Zoom/bass moments: {[f"{m:.1f}s" for m in zoom_moments]}")
+            moments_str = ", ".join(f"{m:.1f}s" for m in zoom_moments)
+            print(f"    Zoom/bass moments: {moments_str}")
         import tempfile as _tf
         sfx_tmp = _tf.NamedTemporaryFile(suffix=".mp4", delete=False, prefix="sfx_").name
         add_sfx(str(captioned_path), sfx_tmp, zoom_moments)
-        sfx_input = sfx_tmp if os.path.exists(sfx_tmp) else str(captioned_path)
-
-        # Add trending audio version
-        print(f"  [6/6] Creating trending audio version...")
-        trending_result, trending_track = add_trending_audio(sfx_input, str(trending_path))
-        if os.path.exists(sfx_tmp):
+        # Replace captioned with SFX version
+        if os.path.exists(sfx_tmp) and os.path.getsize(sfx_tmp) > 0:
+            import shutil
+            shutil.move(sfx_tmp, str(captioned_path))
+        elif os.path.exists(sfx_tmp):
             os.unlink(sfx_tmp)
 
         # Use clip-specific hashtags
@@ -170,20 +166,18 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
 
         db.execute("""
             INSERT INTO videos (script_id, video_path, trending_video_path, duration_seconds, status, content_type, source_episode, clip_start_sec, clip_end_sec, cost_usd, trending_track, top_hook)
-            VALUES (?, ?, ?, ?, 'ready', 'clip', ?, ?, ?, 0.0, ?, ?)
+            VALUES (?, ?, NULL, ?, 'ready', 'clip', ?, ?, ?, 0.0, NULL, ?)
         """, (
             script_id,
             str(captioned_path),
-            str(trending_path) if trending_result else None,
             clip["duration"],
             episode_path.name,
             clip["start_sec"],
             clip["end_sec"],
-            trending_track,
             top_hook,
         ))
 
-        # Garbage collection: delete raw cuts (keep captioned for A/B, trending for posting)
+        # Garbage collection: delete raw cuts after captioned version is built
         import os as _os
         if captioned_path.exists() and clip_path.exists() and str(clip_path) != str(captioned_path):
             _os.unlink(str(clip_path))
@@ -191,8 +185,6 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         db.commit()
         results.append({
             "path": str(captioned_path),
-            "trending_path": str(trending_path) if trending_result else None,
-            "trending_track": trending_track,
             "top_hook": top_hook,
             "duration": clip["duration"],
             "start": clip["start_sec"],
@@ -230,8 +222,8 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
     return results
 
 
-def post_next_clip(use_trending: bool = True) -> bool:
-    """Post the next ready clip to TikTok. Prefers trending audio version."""
+def post_next_clip() -> bool:
+    """Post the next ready clip to TikTok."""
     config = load_config()
     db = get_db()
 
@@ -256,13 +248,7 @@ def post_next_clip(use_trending: bool = True) -> bool:
         db.close()
         return False
 
-    # Prefer trending audio version if available
     video_path = clip["video_path"]
-    trending_path = clip["trending_video_path"] if "trending_video_path" in clip.keys() else None
-    
-    if use_trending and trending_path and Path(trending_path).exists():
-        video_path = trending_path
-        print(f"Using trending audio version")
 
     if not Path(video_path).exists():
         print(f"ERROR: Video file missing: {video_path}")
@@ -360,7 +346,6 @@ def main():
     proc.add_argument("--max-clips", type=int, default=12, help="Max clips to extract")
 
     post_cmd = subparsers.add_parser("post", help="Post the next ready clip")
-    post_cmd.add_argument("--no-trending", action="store_true", help="Post clean version instead of trending")
 
     subparsers.add_parser("process-new", help="Process all new episodes")
     subparsers.add_parser("status", help="Show pipeline status")
@@ -370,7 +355,7 @@ def main():
     if args.command == "process":
         process_episode(args.episode, args.max_clips)
     elif args.command == "post":
-        post_next_clip(use_trending=not args.no_trending)
+        post_next_clip()
     elif args.command == "process-new":
         new_eps = check_for_new_episodes()
         if not new_eps:
