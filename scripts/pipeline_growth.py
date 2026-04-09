@@ -36,6 +36,7 @@ from add_captions import add_captions, get_words_for_clip
 from add_trending_audio import add_trending_audio
 from generate_top_hook import generate_hook_from_transcript
 from add_effects import find_zoom_moments, add_sfx
+from generate_post_caption import generate_post_caption
 from auto_review import run_post_pipeline_review
 
 
@@ -127,6 +128,9 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         # Generate persistent top hook
         clip_num = i + 1
         top_hook = generate_hook_from_transcript(words, episode_name, clip_num)
+        # Generate AI post caption + hashtags
+        post_caption = generate_post_caption(words, episode_name, top_hook)
+
         caption_result = add_captions(str(clip_path), words, str(captioned_path), top_hook=top_hook)
 
         if not caption_result:
@@ -150,7 +154,7 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
             os.unlink(sfx_tmp)
 
         # Use clip-specific hashtags
-        hashtags = clip.get("hashtags", "#topgear #fyp #foryou #jeremyclarkson")
+        hashtags = ""  # hashtags now included in post_caption
 
         # Store in DB
         db.execute("""
@@ -159,7 +163,7 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         """, (
             clip.get("text_preview", "")[:100],
             clip.get("text_preview", ""),
-            clip.get("caption", ""),
+            post_caption,
             hashtags,
         ))
         script_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
