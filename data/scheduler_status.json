@@ -1,10 +1,10 @@
 {
   "state": "waiting",
-  "updated": "2026-04-09T14:37:47.492155-07:00",
-  "next_post": "2026-04-09 15:00 PT",
-  "queue_size": 15,
-  "total_posted": 1,
+  "updated": "2026-04-09T15:01:42.196175-07:00",
+  "next_post": "2026-04-09 19:00 PT",
+  "queue_size": 25,
+  "total_posted": 2,
   "total_failed": 0,
-  "last_post": null,
-  "next_clip": "So, that's the same age as... That's the same age as me. Yes"
+  "last_post": "2026-04-09T15:01:11.451057",
+  "next_clip": "Nevertheless, because we were on tarmac roads, we decided to"
 }
