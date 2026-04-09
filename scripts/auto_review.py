@@ -150,7 +150,7 @@ def claude_available() -> bool:
     """Check if Claude CLI is available and logged in."""
     try:
         result = subprocess.run(
-            [CLAUDE_PATH, "-p", "say ok", "--model", "haiku", "--output-format", "text"],
+            [CLAUDE_PATH, "-p", "say ok", "--model", "opus", "--output-format", "text"],
             capture_output=True, text=True, timeout=15,
             cwd=str(PROJECT_ROOT),
         )
@@ -179,7 +179,7 @@ def review_with_claude(video_path: str, frames: list[str], clip_info: dict = Non
 
     try:
         result = subprocess.run(
-            [CLAUDE_PATH, "-p", prompt, *frame_args, "--model", "haiku", "--output-format", "text"],
+            [CLAUDE_PATH, "-p", prompt, *frame_args, "--model", "opus", "--output-format", "text"],
             capture_output=True, text=True, timeout=120,
             cwd=str(PROJECT_ROOT),
         )
