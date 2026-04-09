@@ -36,8 +36,8 @@ TZ = ZoneInfo("America/Los_Angeles")
 
 # Posting schedule (PT times)
 # A/B test: trending at prime times, captioned (no trending audio) at off-peak
-POST_TIMES_TRENDING = ["07:00", "14:00", "20:00"]  # Prime times
-POST_TIMES_CAPTIONED = ["10:00", "17:00"]  # Off-peak, no trending audio
+POST_TIMES_TRENDING = ["07:00", "15:00", "23:00"]  # Every 8hrs, trending
+POST_TIMES_CAPTIONED = ["11:00", "19:00"]  # Off-peak, captioned only (A/B)
 POST_TIMES = sorted(POST_TIMES_TRENDING + POST_TIMES_CAPTIONED)
 MIN_POST_INTERVAL_MINUTES = 90
 
@@ -143,6 +143,14 @@ def post_clip(clip) -> bool:
         db.execute("UPDATE videos SET status='posted', posted_at=? WHERE id=?", (now, clip["id"]))
         db.execute("UPDATE scripts SET status='posted' WHERE id=?", (clip["script_id"],))
         print(f"  POSTED successfully")
+        # Garbage collection: delete posted clip files to free storage
+        for path_to_delete in [clip["trending_video_path"], clip["video_path"]]:
+            if path_to_delete and Path(path_to_delete).exists():
+                try:
+                    os.unlink(path_to_delete)
+                    print(f"  Deleted: {Path(path_to_delete).name}")
+                except Exception as e:
+                    print(f"  Could not delete {path_to_delete}: {e}")
     else:
         db.execute("UPDATE videos SET status='failed' WHERE id=?", (clip["id"],))
         print(f"  FAILED: {result.stdout[-200:]}")
@@ -152,7 +160,7 @@ def post_clip(clip) -> bool:
     # Send telegram notification
     notify = PROJECT_ROOT / "scripts" / "notify_telegram.sh"
     msg = f"{'Posted' if success else 'FAILED'}: {clip['hook_text'][:60]}"
-    if clip.get("trending_track"):
+    if clip["trending_track"]:
         msg += f"\nAudio: {clip['trending_track']}"
     subprocess.run(["bash", str(notify), "--message", msg], capture_output=True, env=env)
 
