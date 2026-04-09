@@ -7,18 +7,23 @@
   "posting": {
     "timezone": "America/Los_Angeles",
     "growth_times": [
-      "08:30",
-      "17:30"
+      "07:00",
+      "14:00",
+      "20:00"
     ],
     "monetization_times": [
-      "08:30",
-      "12:30",
-      "17:30"
+      "07:00",
+      "11:00",
+      "14:00",
+      "17:00",
+      "20:00"
     ],
     "jitter_seconds": [
       30,
       120
-    ]
+    ],
+    "min_hours_between": 4,
+    "posts_per_day": 3
   },
   "tiktok": {
     "account": "@stigscloset",

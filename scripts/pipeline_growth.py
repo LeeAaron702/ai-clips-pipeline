@@ -34,6 +34,9 @@ from clip_selector import select_clips_heuristic
 from cut_clips import cut_clip
 from add_captions import add_captions, get_words_for_clip
 from add_trending_audio import add_trending_audio
+from generate_top_hook import generate_hook_from_transcript
+from add_effects import find_zoom_moments, add_sfx
+from auto_review import run_post_pipeline_review
 
 
 def load_config() -> dict:
@@ -121,15 +124,30 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         # Add captions
         print(f"  [4/5] Adding captions...")
         words = get_words_for_clip(transcript, clip["start_sec"], clip["end_sec"])
-        caption_result = add_captions(str(clip_path), words, str(captioned_path))
+        # Generate persistent top hook
+        clip_num = i + 1
+        top_hook = generate_hook_from_transcript(words, episode_name, clip_num)
+        caption_result = add_captions(str(clip_path), words, str(captioned_path), top_hook=top_hook)
 
         if not caption_result:
             print(f"  WARNING: Caption failed, using uncaptioned clip")
             captioned_path = clip_path
 
+        # Add SFX (whoosh + bass hits)
+        print(f"  [5/6] Adding sound effects...")
+        zoom_moments = find_zoom_moments(words, max_zooms=4)
+        if zoom_moments:
+            print(f"    Zoom/bass moments: {[f"{m:.1f}s" for m in zoom_moments]}")
+        import tempfile as _tf
+        sfx_tmp = _tf.NamedTemporaryFile(suffix=".mp4", delete=False, prefix="sfx_").name
+        add_sfx(str(captioned_path), sfx_tmp, zoom_moments)
+        sfx_input = sfx_tmp if os.path.exists(sfx_tmp) else str(captioned_path)
+
         # Add trending audio version
-        print(f"  [5/5] Creating trending audio version...")
-        trending_result = add_trending_audio(str(captioned_path), str(trending_path))
+        print(f"  [6/6] Creating trending audio version...")
+        trending_result, trending_track = add_trending_audio(sfx_input, str(trending_path))
+        if os.path.exists(sfx_tmp):
+            os.unlink(sfx_tmp)
 
         # Use clip-specific hashtags
         hashtags = clip.get("hashtags", "#topgear #fyp #foryou #jeremyclarkson")
@@ -163,6 +181,8 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         results.append({
             "path": str(captioned_path),
             "trending_path": str(trending_path) if trending_result else None,
+            "trending_track": trending_track,
+            "top_hook": top_hook,
             "duration": clip["duration"],
             "start": clip["start_sec"],
             "end": clip["end_sec"],
@@ -187,6 +207,15 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
     print(f"{'='*60}\n")
 
     send_telegram(f"Episode processed: {episode_name}\n{len(results)} clips ready for posting")
+
+    # Run auto-review on new clips
+    if results:
+        try:
+            print("\n[AUTO-REVIEW] Reviewing new clips...")
+            run_post_pipeline_review()
+        except Exception as e:
+            print(f"[AUTO-REVIEW] Review failed (non-fatal): {e}")
+
     return results
 
 

@@ -1,13 +1,40 @@
-*.pyc
+# Python
 __pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Environment & Secrets
 .env
 cookies.json
 cookies_pw.json
 cookies.txt
-.DS_Store
-*.db
+
+# Large media files
+input/
 output/
-input/episodes/
-assets/trending_audio/
+
+# Local state
+data/pipeline.db
 data/transcripts/
-.venv/
+
+# Scraped audio (large, potentially copyrighted)
+assets/trending_audio/
+
+# Empty dirs (keep structure via .gitkeep if needed)
+assets/music/
+assets/products/
+
+# Logs
+logs/
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~
+.Thumbs.db
+
+# Temp files
+*.tmp
+*.bak

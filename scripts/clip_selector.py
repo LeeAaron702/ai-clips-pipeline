@@ -123,7 +123,7 @@ def score_segment(segment: dict, prev_segment: dict = None, next_segment: dict =
     return score
 
 
-def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration: tuple = (15, 30)) -> dict:
+def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration: tuple = (12, 45)) -> dict:
     """
     Find natural clip boundaries around a high-scoring segment.
     Target 15-30s for growth phase (better completion rates).
@@ -140,7 +140,7 @@ def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration:
         if duration > max_dur:
             break
         gap = segments[start_idx]["start"] - segments[candidate]["end"]
-        if gap > 2.0 and duration >= min_dur:
+        if gap > 1.2 and duration >= min_dur:
             break
         start_idx = candidate
 
@@ -151,7 +151,7 @@ def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration:
         if duration > max_dur:
             break
         gap = segments[candidate]["start"] - segments[end_idx]["end"]
-        if gap > 2.0 and duration >= min_dur:
+        if gap > 1.2 and duration >= min_dur:
             break
         end_idx = candidate
 

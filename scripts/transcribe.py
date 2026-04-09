@@ -39,6 +39,57 @@ def transcribe_episode(episode_path: str, model_size: str = "large-v3") -> dict:
     print(f"Transcribing: {episode_path.name}")
     print(f"Model: {model_size}")
 
+    # Try mlx-whisper first (Apple Silicon Metal acceleration)
+    try:
+        import mlx_whisper
+        print("Using mlx-whisper (Metal GPU acceleration)")
+        result = mlx_whisper.transcribe(
+            str(episode_path),
+            path_or_hf_repo=f"mlx-community/whisper-{model_size}-mlx",
+            word_timestamps=True,
+            language="en",
+        )
+        # mlx-whisper returns a dict with segments
+        segments = []
+        word_count = 0
+        for seg in result.get("segments", []):
+            words = []
+            for w in seg.get("words", []):
+                words.append({
+                    "word": w["word"].strip(),
+                    "start": round(w["start"], 3),
+                    "end": round(w["end"], 3),
+                    "probability": round(w.get("probability", 0.9), 3),
+                })
+                word_count += 1
+            segments.append({
+                "id": seg.get("id", len(segments)),
+                "start": round(seg["start"], 3),
+                "end": round(seg["end"], 3),
+                "text": seg["text"].strip(),
+                "words": words,
+            })
+        duration = result.get("duration", segments[-1]["end"] if segments else 0)
+        result_data = {
+            "episode": episode_path.name,
+            "duration": round(duration, 3),
+            "language": "en",
+            "model": f"{model_size}-mlx",
+            "segments": segments,
+            "word_count": word_count,
+        }
+        TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump(result_data, f, indent=2)
+        print(f"Transcribed (MLX): {word_count} words, {len(segments)} segments")
+        print(f"Saved: {cache_path}")
+        return result_data
+
+    except ImportError:
+        print("mlx-whisper not available, using faster-whisper (CPU)")
+    except Exception as e:
+        print(f"mlx-whisper failed: {e}, falling back to faster-whisper")
+
     from faster_whisper import WhisperModel
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")

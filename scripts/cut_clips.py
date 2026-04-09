@@ -255,20 +255,29 @@ def cut_clip(episode_path: str, start_sec: float, end_sec: float, output_path: s
             print(f"  Face tracking error: {e}, falling back to center crop")
             face_tracked = False
 
-    # Fallback: center crop
+    # Fallback: blur-fill layout (Opus Clip style)
+    # Full 16:9 frame centered on 9:16 canvas with blurred zoom background
     if not face_tracked:
-        vf = f"crop={crop_w}:{crop_h},scale=1080:1920"
+        filter_complex = (
+            "[0:v]split=2[fg][bg];"
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,boxblur=25:5[blurred];"
+            "[fg]scale=1080:-2[scaled];"
+            "[blurred][scaled]overlay=0:(1920-overlay_h)/2[v]"
+        )
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(start_sec),
             "-to", str(end_sec),
             "-i", str(episode_path),
-            "-vf", vf,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
             "-movflags", "+faststart",
             str(output_path),
         ]
+        print("  Using blur-fill layout (full frame + blurred background)")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"ERROR cutting clip: {result.stderr[-500:]}")
@@ -279,7 +288,7 @@ def cut_clip(episode_path: str, start_sec: float, end_sec: float, output_path: s
         out_info = get_video_info(str(output_path))
         duration = end_sec - start_sec
         size_mb = output_path.stat().st_size / (1024 * 1024)
-        tracked_label = " [face-tracked]" if face_tracked else ""
+        tracked_label = " [face-tracked]" if face_tracked else " [blur-fill]"
         print(f"  Clip: {output_path.name} | {duration:.1f}s | {out_info.get('width', '?')}x{out_info.get('height', '?')} | {size_mb:.1f}MB{tracked_label}")
         return str(output_path)
 

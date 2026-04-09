@@ -58,6 +58,11 @@ BOUNCE_FRAMES = 7                 # ~230ms at 30fps
 HOOK_DURATION = 2.0
 HOOK_Y = 750
 
+# Persistent top hook (stays entire clip)
+TOP_HOOK_Y = 200                  # Near top, below TikTok header
+TOP_HOOK_FONT_SIZE = 64
+TOP_HOOK_COLOR = (255, 255, 255, 230)
+
 # Emphasis words that get permanent highlight color
 EMPHASIS_WORDS = {
     "die", "died", "dead", "death", "kill", "killed", "crash", "crashed",
@@ -249,6 +254,27 @@ def render_hook_frame(hook_text: str, font: ImageFont.FreeTypeFont, progress: fl
     return img
 
 
+# === TOP HOOK (persistent) ===
+def render_top_hook(img: Image.Image, text: str, font: ImageFont.FreeTypeFont):
+    """Render persistent top hook caption with drop shadow (no background)."""
+    draw = ImageDraw.Draw(img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    # Center horizontally
+    x = (WIDTH - tw) // 2
+    y = TOP_HOOK_Y
+
+    # Drop shadow for contrast (same as bottom captions)
+    for dx, dy in SHADOW_OFFSETS:
+        draw.text((x + dx, y + dy), text, fill=SHADOW_COLOR, font=font)
+
+    # Text with stroke
+    draw.text((x, y), text, fill=TOP_HOOK_COLOR, font=font,
+              stroke_width=3, stroke_fill=(0, 0, 0, 255))
+
+
 # === CAPTION RENDERING ===
 def draw_word_shadow(draw, x, y, text, font):
     """Draw drop shadow behind text (no background pill)."""
@@ -433,6 +459,7 @@ def add_captions(
     clip_duration: float = None,
     show_hook: bool = True,
     apply_zoom: bool = True,
+    top_hook: str = "",
 ) -> str:
     video_path = Path(video_path).resolve()
     output_path = Path(output_path).resolve()
@@ -467,6 +494,9 @@ def add_captions(
     highlight_font = load_font(HIGHLIGHT_FONT_SIZE)
     hook_font = load_font(HOOK_FONT_SIZE)
 
+    top_hook_font = load_font(TOP_HOOK_FONT_SIZE) if top_hook else None
+    if top_hook:
+        print(f"Top hook: {top_hook!r}")
     hook_text = extract_hook_text(words) if show_hook else ""
     hook_frames = int(HOOK_DURATION * FPS) if hook_text else 0
 
@@ -496,6 +526,8 @@ def add_captions(
             if key != last_key:
                 last_img = render_hook_frame(hook_text, hook_font, progress)
                 last_key = key
+            if top_hook and top_hook_font:
+                render_top_hook(last_img, top_hook, top_hook_font)
             last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
             continue
 
@@ -510,6 +542,8 @@ def add_captions(
             key = "empty"
             if key != last_key:
                 last_img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+                if top_hook and top_hook_font:
+                    render_top_hook(last_img, top_hook, top_hook_font)
                 last_key = key
             last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
             continue
@@ -524,6 +558,8 @@ def add_captions(
 
         if key != last_key:
             last_img = render_caption_frame(active_group["words"], t, font, highlight_font)
+            if top_hook and top_hook_font:
+                render_top_hook(last_img, top_hook, top_hook_font)
             last_key = key
 
         last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))

@@ -18,6 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from add_captions import add_captions, get_words_for_clip
 from add_trending_audio import add_trending_audio
+from generate_top_hook import generate_hook_from_transcript
 
 CLIPS_DIR = PROJECT_ROOT / "output" / "clips"
 CAPTIONED_DIR = PROJECT_ROOT / "output" / "captioned"
@@ -67,8 +68,10 @@ def reprocess(clip_num: int, show_hook: bool = True, apply_zoom: bool = True):
     words = get_words_for_clip(transcript, start_sec, end_sec)
     print(f"Found {len(words)} words")
 
+    top_hook = generate_hook_from_transcript(words, EPISODE, clip_num)
+
     print("\n[1/2] Adding captions + zoom...")
-    caption_result = add_captions(str(raw_clip), words, str(captioned_out),
+    caption_result = add_captions(str(raw_clip), words, str(captioned_out), top_hook=top_hook,
                                    clip_duration=duration, show_hook=show_hook,
                                    apply_zoom=apply_zoom)
     if not caption_result:

@@ -25,18 +25,19 @@ TRENDING_DIR = PROJECT_ROOT / "assets" / "trending_audio"
 TRENDING_VOLUME = 0.12  # 12% - audible but doesn't compete with dialogue
 
 
-def get_random_trending_audio() -> str:
+def get_random_trending_audio():
     """Pick a random trending audio file from the assets folder."""
     if not TRENDING_DIR.exists():
-        return None
+        return None, None
     
     audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
     tracks = [f for f in TRENDING_DIR.iterdir() if f.suffix.lower() in audio_exts]
     
     if not tracks:
-        return None
+        return None, None
     
-    return str(random.choice(tracks))
+    pick = random.choice(tracks)
+    return str(pick), pick.stem
 
 
 def add_trending_audio(video_path: str, output_path: str, audio_path: str = None, volume: float = TRENDING_VOLUME) -> str:
@@ -49,12 +50,17 @@ def add_trending_audio(video_path: str, output_path: str, audio_path: str = None
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    track_name = None
     if not audio_path:
-        audio_path = get_random_trending_audio()
+        audio_path, track_name = get_random_trending_audio()
+    else:
+        track_name = Path(audio_path).stem
     
     if not audio_path or not Path(audio_path).exists():
         print("WARNING: No trending audio available. Skipping.")
-        return None
+        return None, None
+
+    print(f"  Trending track: {track_name}")
 
     # Get video duration
     result = subprocess.run(
@@ -93,9 +99,9 @@ def add_trending_audio(video_path: str, output_path: str, audio_path: str = None
     if output_path.exists():
         size_mb = output_path.stat().st_size / (1024 * 1024)
         print(f"  Trending audio version: {output_path.name} ({size_mb:.1f}MB)")
-        return str(output_path)
+        return str(output_path), track_name
 
-    return None
+    return None, None
 
 
 def main():
