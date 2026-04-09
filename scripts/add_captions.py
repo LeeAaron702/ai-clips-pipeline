@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-TikTok-style animated captions with word-by-word highlighting.
-V3: Improved hook extraction, bigger hook font, subtle zoom, more opaque pill.
+TikTok-style animated captions V4.
+- Word pop-in bounce animation
+- Montserrat ExtraBold, ALL CAPS
+- No background pill, heavy drop shadow
+- Large text (100/130/160px)
+- 2-line layout (4-6 words per group)
+- Keyword color highlighting
 """
 
 import argparse
@@ -15,49 +20,92 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Caption styling
+# === STYLE CONSTANTS ===
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
-FONT_SIZE = 72
-HIGHLIGHT_FONT_SIZE = 86
-HOOK_FONT_SIZE = 112
+
+# Font sizes
+FONT_SIZE = 100
+HIGHLIGHT_FONT_SIZE = 130
+HOOK_FONT_SIZE = 150
+
+# Colors
 FONT_COLOR = (255, 255, 255, 255)
-HIGHLIGHT_COLOR = (255, 255, 0, 255)
+HIGHLIGHT_COLOR = (255, 255, 0, 255)      # Yellow for keywords
+ACTIVE_COLOR = (255, 255, 0, 255)          # Yellow pop for current word
 HOOK_COLOR = (255, 255, 255, 255)
 STROKE_COLOR = (0, 0, 0, 255)
-STROKE_WIDTH = 3
-HOOK_STROKE_WIDTH = 5
-BG_COLOR = (0, 0, 0, 190)
-BG_PADDING_X = 44
-BG_PADDING_Y = 28
-BG_RADIUS = 28
-CAPTION_Y = 1420
-MAX_WORDS_PER_GROUP = 3
-MIN_WORDS_PER_GROUP = 2
-HOOK_DURATION = 2.0
-HOOK_Y = 800
+SHADOW_COLOR = (0, 0, 0, 180)
 
+# Shadow (replaces background pill)
+STROKE_WIDTH = 2
+SHADOW_OFFSETS = [(0, 5), (1, 5), (-1, 5), (2, 4), (-2, 4), (0, 6), (3, 3), (-3, 3)]
+
+# Layout
+CAPTION_Y = 1280                  # Higher to fit 2 lines above TikTok UI
+LINE_SPACING = 20
+WORD_SPACING = 24
+MAX_WORDS_PER_GROUP = 5
+MIN_WORDS_PER_GROUP = 3
+
+# Animation
+BOUNCE_FRAMES = 7                 # ~230ms at 30fps
+HOOK_DURATION = 2.0
+HOOK_Y = 750
+
+# Emphasis words that get permanent highlight color
+EMPHASIS_WORDS = {
+    "die", "died", "dead", "death", "kill", "killed", "crash", "crashed",
+    "fire", "explode", "destroyed", "smash", "fastest", "insane",
+    "incredible", "amazing", "terrible", "horrible", "impossible",
+    "brilliant", "genius", "perfect", "beautiful", "ruined", "disaster",
+    "nightmare", "ridiculous", "magnificent", "spectacular", "hilarious",
+    "never", "always", "worst", "best", "ever", "hell", "god", "bloody",
+    "water", "broke", "broken", "fail", "failed", "won", "win", "lost",
+    "love", "hate", "yes", "no",
+}
+
+# === FONT LOADING ===
+_font_cache = {}
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
+    if size in _font_cache:
+        return _font_cache[size]
     font_paths = [
+        str(PROJECT_ROOT / "assets" / "fonts" / "Montserrat-ExtraBold.ttf"),
+        str(PROJECT_ROOT / "assets" / "fonts" / "Montserrat-Black.ttf"),
         "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/SFCompact-Bold.otf",
-        "/System/Library/Fonts/Helvetica.ttc",
     ]
     for fp in font_paths:
         if os.path.exists(fp):
             try:
-                return ImageFont.truetype(fp, size)
+                f = ImageFont.truetype(fp, size)
+                _font_cache[size] = f
+                return f
             except Exception:
                 continue
     return ImageFont.load_default()
 
 
+# === ANIMATION ===
+def bounce_scale(frame_offset: int) -> float:
+    """Ease-out-back bounce: 0 -> overshoot 115% -> settle 100%."""
+    if frame_offset >= BOUNCE_FRAMES:
+        return 1.0
+    if frame_offset < 0:
+        return 0.0
+    t = frame_offset / BOUNCE_FRAMES  # 0 to 1
+    c1 = 1.70158
+    c3 = c1 + 1
+    return 1 + c3 * pow(t - 1, 3) + c1 * pow(t - 1, 2)
+
+
+# === TEXT HELPERS ===
 def is_music_tag(word: str) -> bool:
     cleaned = word.strip().upper()
     return cleaned in {"MUSIC", "[MUSIC]", "(MUSIC)", "♪", "♫", "[APPLAUSE]", "[LAUGHTER]"}
@@ -65,54 +113,60 @@ def is_music_tag(word: str) -> bool:
 
 def clean_word(word: str) -> str:
     w = word.strip()
-    # Fix whisper hyphenation artifacts: "second -hand" -> "second-hand"
     w = re.sub(r" -", "-", w)
     w = re.sub(r"- ", "-", w)
     return w
 
 
-def group_words(words: list[dict], max_per_group: int = MAX_WORDS_PER_GROUP) -> list[list[dict]]:
+def is_emphasis(word: str) -> bool:
+    return word.strip(".,!?;:\"'").lower() in EMPHASIS_WORDS
+
+
+def group_words(words: list[dict]) -> list[list[dict]]:
     if not words:
         return []
     groups = []
-    current_group = []
+    current = []
     for word in words:
-        current_group.append(word)
+        current.append(word)
         should_break = False
         text = word["word"]
-        if len(current_group) >= max_per_group:
+        if len(current) >= MAX_WORDS_PER_GROUP:
             should_break = True
-        elif len(current_group) >= MIN_WORDS_PER_GROUP:
+        elif len(current) >= MIN_WORDS_PER_GROUP:
             if text.endswith((".", ",", "!", "?", "...", ";", ":")):
                 should_break = True
-            word_idx = words.index(word)
-            if word_idx < len(words) - 1:
-                gap = words[word_idx + 1]["start"] - word["end"]
+            idx = words.index(word)
+            if idx < len(words) - 1:
+                gap = words[idx + 1]["start"] - word["end"]
                 if gap > 0.3:
                     should_break = True
         if should_break:
-            groups.append(current_group)
-            current_group = []
-    if current_group:
-        groups.append(current_group)
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
     return groups
 
 
+def split_into_lines(words: list) -> list[list]:
+    """Split word list into 2 lines for display."""
+    if len(words) <= 3:
+        return [words]
+    mid = (len(words) + 1) // 2
+    return [words[:mid], words[mid:]]
+
+
+# === HOOK ===
 def extract_hook_text(words: list[dict], max_words: int = 9) -> str:
-    """Extract the most compelling hook phrase from the clip."""
     if not words:
         return ""
-
     full_text = " ".join(clean_word(w["word"]) for w in words[:40])
     sentences = re.split(r'(?<=[.!?])\s+', full_text)
-
-    # Strategy 1: Find first punchy sentence with ! or ? (min 3 words)
     for sent in sentences[:5]:
         sent = sent.strip()
         if sent.endswith(("!", "?")) and 3 <= len(sent.split()) <= max_words:
-            return sent
-
-    # Strategy 2: Combine short exclamation with next sentence for context
+            return sent.upper()
     if len(sentences) > 1:
         first = sentences[0].strip()
         second = sentences[1].strip()
@@ -120,30 +174,24 @@ def extract_hook_text(words: list[dict], max_words: int = 9) -> str:
             combined = first + " " + second
             cw = combined.split()
             if len(cw) <= max_words:
-                return combined
-            return " ".join(cw[:max_words]) + "..."
-
-    # Strategy 3: First sentence whole if <= max_words
+                return combined.upper()
+            return (" ".join(cw[:max_words]) + "...").upper()
     if sentences:
         first = sentences[0].strip()
-        first_words = first.split()
-        if len(first_words) <= max_words:
+        fw = first.split()
+        if len(fw) <= max_words:
             if not first.endswith((".", "!", "?")):
                 first += "..."
-            return first
-        return " ".join(first_words[:max_words]) + "..."
-
-    hook_words = [clean_word(w["word"]) for w in words[:5]]
-    return " ".join(hook_words) + "..."
+            return first.upper()
+        return (" ".join(fw[:max_words]) + "...").upper()
+    return (" ".join(clean_word(w["word"]) for w in words[:5]) + "...").upper()
 
 
 def render_hook_frame(hook_text: str, font: ImageFont.FreeTypeFont, progress: float) -> Image.Image:
-    """Render hook text with fade-in/out and slight scale effect."""
     img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     words = hook_text.split()
-    # Auto-split into lines: max ~4 words per line, up to 3 lines
     if len(words) <= 4:
         lines = [hook_text]
     elif len(words) <= 8:
@@ -153,95 +201,193 @@ def render_hook_frame(hook_text: str, font: ImageFont.FreeTypeFont, progress: fl
         third = len(words) // 3
         lines = [" ".join(words[:third]), " ".join(words[third:2*third]), " ".join(words[2*third:])]
 
-    # Auto-reduce font if any line is too wide
-    temp_img = Image.new("RGBA", (WIDTH, 100), (0, 0, 0, 0))
-    temp_draw = ImageDraw.Draw(temp_img)
-    max_w = max(temp_draw.textbbox((0,0), line, font=font)[2] for line in lines)
-    if max_w > WIDTH - 80:
-        smaller = load_font(int(HOOK_FONT_SIZE * 0.75))
-        font = smaller
-
-    line_heights = []
+    # Auto-reduce font for wide lines
     line_widths = []
+    line_heights = []
+    active_font = font
     for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
+        bbox = draw.textbbox((0, 0), line, font=active_font)
         line_widths.append(bbox[2] - bbox[0])
         line_heights.append(bbox[3] - bbox[1])
+    if max(line_widths) > WIDTH - 80:
+        ratio = (WIDTH - 80) / max(line_widths)
+        active_font = load_font(max(60, int(HOOK_FONT_SIZE * ratio)))
+        line_widths = []
+        line_heights = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=active_font)
+            line_widths.append(bbox[2] - bbox[0])
+            line_heights.append(bbox[3] - bbox[1])
 
-    total_height = sum(line_heights) + 20 * (len(lines) - 1)
-    start_y = HOOK_Y - total_height // 2
+    total_h = sum(line_heights) + 20 * (len(lines) - 1)
+    start_y = HOOK_Y - total_h // 2
 
-    # Fade: quick in (0.1s), hold, quick out (0.15s)
-    if progress < 0.05:
-        alpha = int(255 * (progress / 0.05))
+    # Fade + scale animation
+    if progress < 0.08:
+        alpha = int(255 * (progress / 0.08))
+        scale = 0.5 + 0.5 * (progress / 0.08)
     elif progress > 0.85:
         alpha = int(255 * ((1.0 - progress) / 0.15))
+        scale = 1.0
     else:
         alpha = 255
+        scale = 1.0
 
-    hook_color = (HOOK_COLOR[0], HOOK_COLOR[1], HOOK_COLOR[2], alpha)
-    stroke_color = (0, 0, 0, alpha)
+    hook_fill = (HOOK_COLOR[0], HOOK_COLOR[1], HOOK_COLOR[2], alpha)
+    shadow_fill = (0, 0, 0, alpha)
 
     for i, line in enumerate(lines):
         x = (WIDTH - line_widths[i]) // 2
         y = start_y + i * (line_heights[i] + 20)
-        draw.text((x, y), line, fill=hook_color, font=font,
-                  stroke_width=HOOK_STROKE_WIDTH, stroke_fill=stroke_color)
+        # Shadow
+        for dx, dy in SHADOW_OFFSETS:
+            draw.text((x + dx, y + dy), line, fill=shadow_fill, font=active_font)
+        # Text with stroke
+        draw.text((x, y), line, fill=hook_fill, font=active_font,
+                  stroke_width=3, stroke_fill=shadow_fill)
 
     return img
+
+
+# === CAPTION RENDERING ===
+def draw_word_shadow(draw, x, y, text, font):
+    """Draw drop shadow behind text (no background pill)."""
+    for dx, dy in SHADOW_OFFSETS:
+        draw.text((x + dx, y + dy), text, fill=SHADOW_COLOR, font=font)
+
+
+def render_scaled_word(img: Image.Image, text: str, cx: int, cy: int,
+                       font: ImageFont.FreeTypeFont, color: tuple,
+                       scale: float):
+    """Render a single word at a given scale, centered on (cx, cy)."""
+    # Get full-size metrics
+    temp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+
+    pad = 30
+    temp = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+    td = ImageDraw.Draw(temp)
+
+    # Shadow
+    for dx, dy in SHADOW_OFFSETS:
+        td.text((pad + dx, pad + dy), text, fill=SHADOW_COLOR, font=font)
+    # Stroke + fill
+    td.text((pad, pad), text, fill=color, font=font,
+            stroke_width=STROKE_WIDTH, stroke_fill=STROKE_COLOR)
+
+    # Scale
+    new_w = max(1, int(temp.width * scale))
+    new_h = max(1, int(temp.height * scale))
+    temp = temp.resize((new_w, new_h), Image.LANCZOS)
+
+    # Paste centered on (cx, cy)
+    paste_x = cx - new_w // 2
+    paste_y = cy - new_h // 2
+    # Clamp to image bounds
+    paste_x = max(0, min(WIDTH - new_w, paste_x))
+    paste_y = max(0, min(HEIGHT - new_h, paste_y))
+    img.alpha_composite(temp, (paste_x, paste_y))
+
+    return w  # Return full-size width for layout
 
 
 def render_caption_frame(
     group: list[dict],
-    active_word_idx: int,
+    current_time: float,
     font: ImageFont.FreeTypeFont,
     highlight_font: ImageFont.FreeTypeFont,
 ) -> Image.Image:
+    """Render caption frame with word-by-word bounce animation."""
     img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    word_metrics = []
-    total_width = 0
-    max_height = 0
-    spacing = 16
-
+    # Build word metrics
+    word_data = []
     for i, w in enumerate(group):
-        text = clean_word(w["word"])
-        is_active = (i == active_word_idx)
-        f = highlight_font if is_active else font
+        text = clean_word(w["word"]).upper()
+        is_emph = is_emphasis(text)
+        f = highlight_font if is_emph else font
+        color = HIGHLIGHT_COLOR if is_emph else FONT_COLOR
+
         bbox = draw.textbbox((0, 0), text, font=f)
         w_width = bbox[2] - bbox[0]
         w_height = bbox[3] - bbox[1]
-        word_metrics.append({
+
+        # Is this word currently being spoken?
+        is_active = w["start"] <= current_time <= w["end"] + 0.1
+
+        # Calculate bounce
+        time_since = current_time - w["start"]
+        frames_since = int(time_since * FPS)
+        scale = bounce_scale(frames_since) if time_since >= 0 else 0.0
+
+        # Active word gets pop color if not already emphasized
+        if is_active and not is_emph:
+            color = ACTIVE_COLOR
+
+        word_data.append({
             "text": text, "width": w_width, "height": w_height,
-            "font": f, "is_active": is_active,
+            "font": f, "color": color, "scale": scale,
+            "is_active": is_active, "visible": time_since >= 0,
         })
-        total_width += w_width
-        max_height = max(max_height, w_height)
 
-    total_width += spacing * (len(group) - 1)
-    if total_width + 2 * BG_PADDING_X > WIDTH:
-        total_width = WIDTH - 2 * BG_PADDING_X
+    # Only show visible words
+    visible = [wd for wd in word_data if wd["visible"]]
+    if not visible:
+        return img
 
-    start_x = (WIDTH - total_width) // 2
+    # Split into lines
+    lines = split_into_lines(visible)
 
-    pill_x1 = start_x - BG_PADDING_X
-    pill_y1 = CAPTION_Y - BG_PADDING_Y
-    pill_x2 = start_x + total_width + BG_PADDING_X
-    pill_y2 = CAPTION_Y + max_height + BG_PADDING_Y
-    draw.rounded_rectangle((pill_x1, pill_y1, pill_x2, pill_y2), radius=BG_RADIUS, fill=BG_COLOR)
+    # Get max height across all words for consistent line height
+    max_h = max(wd["height"] for wd in visible)
 
-    x = start_x
-    for wm in word_metrics:
-        y = CAPTION_Y + (max_height - wm["height"]) // 2
-        color = HIGHLIGHT_COLOR if wm["is_active"] else FONT_COLOR
-        draw.text((x, y), wm["text"], fill=color, font=wm["font"],
-                  stroke_width=STROKE_WIDTH, stroke_fill=STROKE_COLOR)
-        x += wm["width"] + spacing
+    # Render each line
+    for line_idx, line_words in enumerate(lines):
+        # Calculate total width at current scales
+        total_w = sum(int(wd["width"] * max(wd["scale"], 0.01)) for wd in line_words)
+        total_w += WORD_SPACING * (len(line_words) - 1)
+
+        # Cap line width to screen with margins
+        margin = 40
+        if total_w > WIDTH - margin * 2:
+            # Scale down all words proportionally
+            scale_factor = (WIDTH - margin * 2) / total_w
+            for wd in line_words:
+                wd["width"] = int(wd["width"] * scale_factor)
+                wd["height"] = int(wd["height"] * scale_factor)
+                wd["font"] = load_font(int(FONT_SIZE * scale_factor)) if not is_emphasis(wd["text"]) else load_font(int(HIGHLIGHT_FONT_SIZE * scale_factor))
+            total_w = sum(wd["width"] for wd in line_words) + WORD_SPACING * (len(line_words) - 1)
+            max_h = max(wd["height"] for wd in line_words)
+
+        line_y = CAPTION_Y + line_idx * (max_h + LINE_SPACING)
+        start_x = max(margin, (WIDTH - total_w) // 2)
+
+        x = start_x
+        for wd in line_words:
+            effective_w = int(wd["width"] * max(wd["scale"], 0.01))
+            cx = x + effective_w // 2
+            cy = line_y + max_h // 2
+
+            if wd["scale"] < 0.98:
+                # Bouncing: render scaled
+                render_scaled_word(img, wd["text"], cx, cy, wd["font"], wd["color"], wd["scale"])
+            else:
+                # Full size: render directly (fast path)
+                dx = x
+                dy = line_y + (max_h - wd["height"]) // 2
+                draw_word_shadow(draw, dx, dy, wd["text"], wd["font"])
+                draw.text((dx, dy), wd["text"], fill=wd["color"], font=wd["font"],
+                          stroke_width=STROKE_WIDTH, stroke_fill=STROKE_COLOR)
+
+            x += effective_w + WORD_SPACING
 
     return img
 
 
+# === TRANSCRIPT HELPERS ===
 def get_words_for_clip(transcript: dict, clip_start: float, clip_end: float) -> list[dict]:
     words = []
     for segment in transcript["segments"]:
@@ -259,37 +405,27 @@ def get_words_for_clip(transcript: dict, clip_start: float, clip_end: float) -> 
     return words
 
 
+# === ZOOM ===
 def apply_zoom_effect(input_path: str, output_path: str, zoom_pct: float = 3.0) -> str:
-    """Apply a subtle slow zoom (Ken Burns) effect to keep visual interest."""
-    # Zoom from 100% to 100+zoom_pct% over the clip duration
-    # Using ffmpeg zoompan filter
     result = subprocess.run(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", input_path],
         capture_output=True, text=True
     )
     duration = float(result.stdout.strip())
-    total_frames = int(duration * 25)  # source fps
-
-    # zoompan: zoom from 1.0 to 1.0+zoom_pct/100 linearly
+    total_frames = int(duration * 25)
     zoom_end = 1.0 + zoom_pct / 100.0
     zoom_expr = f"'min({zoom_end},1+({zoom_pct/100}/{total_frames})*on)'"
-    
     cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
+        "ffmpeg", "-y", "-i", input_path,
         "-vf", f"zoompan=z={zoom_expr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=25",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        output_path,
+        "-c:a", "copy", "-movflags", "+faststart", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"WARNING: Zoom effect failed: {result.stderr[-300:]}")
-        return None
-    return output_path
+    return output_path if result.returncode == 0 else None
 
 
+# === MAIN PIPELINE ===
 def add_captions(
     video_path: str,
     words: list[dict],
@@ -298,13 +434,11 @@ def add_captions(
     show_hook: bool = True,
     apply_zoom: bool = True,
 ) -> str:
-    """Add TikTok-style animated captions with hook overlay to a video."""
     video_path = Path(video_path).resolve()
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not words:
-        print("WARNING: No words to caption. Copying video as-is.")
         shutil.copy2(str(video_path), str(output_path))
         return str(output_path)
 
@@ -315,21 +449,20 @@ def add_captions(
         )
         clip_duration = float(result.stdout.strip())
 
-    # Optional zoom effect on source video first
+    # Optional zoom
     zoom_input = str(video_path)
     zoom_tmp = None
     if apply_zoom:
         import tempfile as tf
         zoom_tmp = tf.NamedTemporaryFile(suffix='.mp4', delete=False, prefix='zoom_').name
-        print("Applying subtle zoom effect...")
-        zoom_result = apply_zoom_effect(str(video_path), zoom_tmp)
-        if zoom_result:
-            zoom_input = zoom_tmp
+        print("Applying zoom...")
+        if not apply_zoom_effect(str(video_path), zoom_tmp):
+            zoom_tmp = None
+            zoom_input = str(video_path)
         else:
-            print("Zoom failed, continuing without it")
+            zoom_input = zoom_tmp
 
     total_frames = int(clip_duration * FPS)
-
     font = load_font(FONT_SIZE)
     highlight_font = load_font(HIGHLIGHT_FONT_SIZE)
     hook_font = load_font(HOOK_FONT_SIZE)
@@ -340,78 +473,77 @@ def add_captions(
     groups = group_words(words)
     group_timeline = []
     for group in groups:
-        group_start = group[0]["start"]
-        group_end = group[-1]["end"]
-        group_timeline.append({"words": group, "start": group_start, "end": group_end})
+        group_timeline.append({
+            "words": group,
+            "start": group[0]["start"],
+            "end": group[-1]["end"],
+        })
 
     frame_dir = tempfile.mkdtemp(prefix="captions_")
-    print(f"Rendering {total_frames} caption frames (hook: {hook_text!r})...")
+    print(f"Rendering {total_frames} frames (hook: {hook_text!r})...")
+    print(f"Font: Montserrat ExtraBold {FONT_SIZE}/{HIGHLIGHT_FONT_SIZE}px, ALL CAPS, no BG pill")
 
-    last_frame_img = None
-    last_frame_key = None
+    last_img = None
+    last_key = None
 
     for frame_idx in range(total_frames):
         t = frame_idx / FPS
 
+        # Hook phase
         if frame_idx < hook_frames and hook_text:
             progress = frame_idx / hook_frames
-            frame_key = f"hook_{int(progress * 20)}"
-            if frame_key != last_frame_key:
-                img = render_hook_frame(hook_text, hook_font, progress)
-                last_frame_img = img
-                last_frame_key = frame_key
-            last_frame_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
+            key = f"hook_{int(progress * 20)}"
+            if key != last_key:
+                last_img = render_hook_frame(hook_text, hook_font, progress)
+                last_key = key
+            last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
             continue
 
+        # Find active group
         active_group = None
         for gt in group_timeline:
-            if gt["start"] <= t <= gt["end"] + 0.1:
+            if gt["start"] - 0.1 <= t <= gt["end"] + 0.15:
                 active_group = gt
                 break
 
         if active_group is None:
-            frame_key = "empty"
-            if last_frame_key != frame_key:
-                img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-                last_frame_img = img
-                last_frame_key = frame_key
-            last_frame_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
+            key = "empty"
+            if key != last_key:
+                last_img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+                last_key = key
+            last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
             continue
 
-        active_word_idx = 0
-        for i, w in enumerate(active_group["words"]):
-            if w["start"] <= t <= w["end"] + 0.05:
-                active_word_idx = i
-                break
-            elif t > w["end"]:
-                active_word_idx = i
+        # Build cache key from word visibility states
+        word_states = []
+        for w in active_group["words"]:
+            ts = t - w["start"]
+            fs = int(ts * FPS) if ts >= 0 else -1
+            word_states.append(min(fs, BOUNCE_FRAMES + 1))
+        key = f"{id(active_group)}_{tuple(word_states)}"
 
-        frame_key = f"{id(active_group)}_{active_word_idx}"
-        if frame_key != last_frame_key:
-            img = render_caption_frame(active_group["words"], active_word_idx, font, highlight_font)
-            last_frame_img = img
-            last_frame_key = frame_key
-        last_frame_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
+        if key != last_key:
+            last_img = render_caption_frame(active_group["words"], t, font, highlight_font)
+            last_key = key
 
-    print("Compositing captions onto video...")
+        last_img.save(os.path.join(frame_dir, f"frame_{frame_idx:06d}.png"))
+
+    # Composite
+    print("Compositing...")
     caption_video = os.path.join(frame_dir, "captions.mov")
-
     subprocess.run([
         "ffmpeg", "-y", "-framerate", str(FPS),
         "-i", os.path.join(frame_dir, "frame_%06d.png"),
-        "-c:v", "png", "-pix_fmt", "rgba",
-        caption_video,
+        "-c:v", "png", "-pix_fmt", "rgba", caption_video,
     ], capture_output=True, text=True)
 
     result = subprocess.run([
         "ffmpeg", "-y",
-        "-i", zoom_input,
-        "-i", caption_video,
+        "-i", zoom_input, "-i", caption_video,
         "-filter_complex", "[0:v][1:v]overlay=0:0:shortest=1[v]",
         "-map", "[v]", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
+        "-c:a", "copy", "-movflags", "+faststart",
         str(output_path),
     ], capture_output=True, text=True)
 
@@ -420,38 +552,30 @@ def add_captions(
         os.unlink(zoom_tmp)
 
     if result.returncode != 0:
-        print(f"ERROR compositing: {result.stderr[-500:]}")
+        print(f"ERROR: {result.stderr[-500:]}")
         return None
-
     if output_path.exists():
-        size_mb = output_path.stat().st_size / (1024 * 1024)
-        print(f"Captioned: {output_path.name} ({size_mb:.1f}MB)")
+        print(f"Done: {output_path.name} ({output_path.stat().st_size/1024/1024:.1f}MB)")
         return str(output_path)
-
-    print("ERROR: Output not created")
     return None
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Add TikTok-style captions to video clips")
-    parser.add_argument("--video", required=True, help="Input video clip")
-    parser.add_argument("--transcript", required=True, help="Transcript JSON file")
-    parser.add_argument("--start", type=float, required=True, help="Clip start time in episode (seconds)")
-    parser.add_argument("--end", type=float, required=True, help="Clip end time in episode (seconds)")
-    parser.add_argument("--output", required=True, help="Output video path")
-    parser.add_argument("--no-hook", action="store_true", help="Disable hook text overlay")
-    parser.add_argument("--no-zoom", action="store_true", help="Disable zoom effect")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--video", required=True)
+    parser.add_argument("--transcript", required=True)
+    parser.add_argument("--start", type=float, required=True)
+    parser.add_argument("--end", type=float, required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--no-hook", action="store_true")
+    parser.add_argument("--no-zoom", action="store_true")
     args = parser.parse_args()
-
     with open(args.transcript) as f:
         transcript = json.load(f)
-
     words = get_words_for_clip(transcript, args.start, args.end)
-    print(f"Found {len(words)} words for clip ({args.start:.1f}s - {args.end:.1f}s)")
-
-    add_captions(args.video, words, args.output, clip_duration=args.end - args.start,
+    print(f"Found {len(words)} words")
+    add_captions(args.video, words, args.output, args.end - args.start,
                  show_hook=not args.no_hook, apply_zoom=not args.no_zoom)
-
 
 if __name__ == "__main__":
     main()
