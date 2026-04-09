@@ -22,8 +22,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Face tracking config
-SAMPLE_EVERY_N_FRAMES = 5       # Check every 5th frame for faces
-SMOOTHING_WINDOW = 15           # Frames to smooth crop position over
+SAMPLE_EVERY_N_FRAMES = 3       # Check every 5th frame for faces
+SMOOTHING_WINDOW = 9           # Frames to smooth crop position over
 FALLBACK_TO_CENTER = True       # Center crop when no face detected
 FACE_PADDING_RATIO = 0.3       # Extra padding around detected face
 
@@ -186,7 +186,7 @@ def cut_clip(episode_path: str, start_sec: float, end_sec: float, output_path: s
             detected_count = sum(1 for _, pos in positions if pos is not None)
             detection_rate = detected_count / max(len(positions), 1)
 
-            if detection_rate > 0.3:
+            if detection_rate > 0.25:
                 offsets = smooth_crop_positions(positions, total_frames, src_w, crop_w)
                 face_tracked = True
                 print(f"  Face tracking: {detection_rate:.0%} detection rate, {len(offsets)} frames")
