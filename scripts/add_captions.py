@@ -36,8 +36,8 @@ HOOK_FONT_SIZE = 150
 
 # Colors
 FONT_COLOR = (255, 255, 255, 255)
-HIGHLIGHT_COLOR = (255, 255, 0, 255)      # Yellow for keywords
-ACTIVE_COLOR = (255, 255, 0, 255)          # Yellow pop for current word
+HIGHLIGHT_COLOR = (31, 135, 255, 255)      # Top Gear blue for keywords
+ACTIVE_COLOR = (31, 135, 255, 255)          # Top Gear blue pop for current word
 HOOK_COLOR = (255, 255, 255, 255)
 STROKE_COLOR = (0, 0, 0, 255)
 SHADOW_COLOR = (0, 0, 0, 180)
