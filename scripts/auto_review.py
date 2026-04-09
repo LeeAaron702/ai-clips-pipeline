@@ -19,7 +19,9 @@ import os
 import re
 import shutil
 import sqlite3
+import base64
 import subprocess
+import urllib.request
 import sys
 import tempfile
 from datetime import datetime
@@ -145,6 +147,17 @@ def pick_review_frames(frames: list[str], count: int = 6) -> list[str]:
     step = len(frames) / count
     return [frames[int(i * step)] for i in range(count)]
 
+
+
+
+def get_api_token():
+    """Load OAuth access token for API calls."""
+    cred_path = Path.home() / ".claude" / ".credentials.json"
+    if cred_path.exists():
+        with open(cred_path) as f:
+            creds = json.load(f)
+        return creds.get("claudeAiOauth", {}).get("accessToken")
+    return None
 
 def claude_available() -> bool:
     """Check if Claude CLI is available and logged in."""

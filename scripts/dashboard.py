@@ -106,6 +106,38 @@ def get_scheduler_pid():
         return None
 
 
+
+def get_scheduled_times(queue_size):
+    """Calculate the scheduled post time for each clip in the queue."""
+    POST_TIMES = [
+        "06:00", "08:30", "10:30", "12:30", "14:30",
+        "16:30", "18:30", "20:00", "21:30", "23:00",
+    ]
+    now = datetime.now(TZ)
+    today = now.date()
+    slots = []
+    for t in POST_TIMES:
+        h, m = map(int, t.split(":"))
+        candidate = datetime(today.year, today.month, today.day, h, m, tzinfo=TZ)
+        if candidate > now:
+            slots.append(candidate)
+    days_needed = (queue_size // len(POST_TIMES)) + 2
+    for d in range(1, days_needed + 1):
+        future = today + timedelta(days=d)
+        for t in POST_TIMES:
+            h, m = map(int, t.split(":"))
+            slots.append(datetime(future.year, future.month, future.day, h, m, tzinfo=TZ))
+    times = []
+    for i in range(min(queue_size, len(slots))):
+        slot = slots[i]
+        if slot.date() == today:
+            times.append(slot.strftime("Today %I:%M %p"))
+        elif slot.date() == today + timedelta(days=1):
+            times.append(slot.strftime("Tmrw %I:%M %p"))
+        else:
+            times.append(slot.strftime("%b %d %I:%M %p"))
+    return times
+
 def build_dashboard():
     """Build the full HTML dashboard."""
     now = datetime.now(TZ)
@@ -140,6 +172,8 @@ def build_dashboard():
         FROM videos v JOIN scripts s ON v.script_id = s.id
         WHERE v.status = 'ready' ORDER BY v.created_at ASC LIMIT 15
     """).fetchall()
+
+    scheduled_times = get_scheduled_times(len(queue))
 
     # --- Recent posts ---
     recent = db.execute("""
@@ -209,7 +243,7 @@ def build_dashboard():
         </tr>"""
 
     queue_rows = ""
-    for q in queue:
+    for _qi, q in enumerate(queue):
         ep = Path(q["source_episode"]).stem if q["source_episode"] else "?"
         hook = html.escape(q["top_hook"] or q["hook_text"] or "-")[:50]
         queue_rows += f"""<tr>
@@ -217,6 +251,7 @@ def build_dashboard():
             <td>{ep[:30]}</td>
             <td>{hook}</td>
             <td>{q['duration_seconds']:.0f}s</td>
+            <td style="color:#ffb74d">{scheduled_times[_qi] if _qi < len(scheduled_times) else "?"}</td>
         </tr>"""
 
     recent_rows = ""
@@ -301,7 +336,8 @@ def build_dashboard():
     <div class="status-item"><strong>Processor:</strong> {status_dot(proc_pid is not None)}{f' (PID {proc_pid})' if proc_pid else ''}</div>
     <div class="status-item"><strong>Scheduler:</strong> {status_dot(sched_pid is not None)}{f' (PID {sched_pid})' if sched_pid else ''}</div>
     <div class="status-item"><strong>State:</strong> {sched_state}</div>
-    <div class="status-item"><strong>Next Post:</strong> {next_post}</div>
+    <div class="status-item"><strong>Next Post:</strong> <span style="color:#ffb74d;font-weight:bold">{next_post}</span> <span id="countdown" style="color:#8b949e;font-size:0.85em"></span></div>
+    <div class="status-item"><strong>Last Post:</strong> {sched.get("last_post", "never")[:16] if sched.get("last_post") else "never"}</div>
 </div>
 
 <div class="cards">
@@ -319,7 +355,7 @@ def build_dashboard():
 <div>
 <h2>Post Queue (next {len(queue)})</h2>
 <table>
-<tr><th>#</th><th>Episode</th><th>Hook</th><th>Dur</th></tr>
+<tr><th>#</th><th>Episode</th><th>Hook</th><th>Dur</th><th>Scheduled</th></tr>
 {queue_rows}
 </table>
 </div>
@@ -362,6 +398,35 @@ def build_dashboard():
 <div style="text-align:center; color:#8b949e; font-size:0.7em; margin-top:30px; padding-top:12px; border-top:1px solid #21262d;">
     ai-clips-pipeline &middot; hermes &middot; refreshed {now.strftime('%H:%M:%S PT')}
 </div>
+
+
+
+<script>
+(function() {{
+    var el = document.getElementById("countdown");
+    if (!el) return;
+    var spans = el.parentElement.querySelectorAll("span");
+    var nextText = spans[0] ? spans[0].textContent.trim() : "";
+    if (!nextText || nextText === "?") return;
+    var parts = nextText.replace(" PT", "").split(" ");
+    if (parts.length < 2) return;
+    function pad(n) {{ return n < 10 ? "0" + n : n; }}
+    function tick() {{
+        var now = new Date();
+        var ptStr = now.toLocaleString("en-US", {{timeZone: "America/Los_Angeles", hour12: false}});
+        var ptNow = new Date(ptStr);
+        var ptTarget = new Date(parts[0] + "T" + parts[1] + ":00");
+        var diff = ptTarget - ptNow;
+        if (diff <= 0) {{ el.textContent = "(posting now...)"; return; }}
+        var h = Math.floor(diff / 3600000);
+        var m = Math.floor((diff % 3600000) / 60000);
+        var s = Math.floor((diff % 60000) / 1000);
+        el.textContent = h > 0 ? "(" + h + "h " + m + "m)" : "(" + m + "m " + pad(s) + "s)";
+    }}
+    tick();
+    setInterval(tick, 1000);
+}})();
+</script>
 </body>
 </html>"""
 
