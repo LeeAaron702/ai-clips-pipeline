@@ -49,13 +49,18 @@ def get_video_info(path: str) -> dict:
 
 def detect_face_positions(episode_path: str, start_sec: float, end_sec: float, src_w: int, src_h: int) -> list:
     """
-    Detect face center X positions throughout the clip using MediaPipe.
+    Detect face center X positions throughout the clip using MediaPipe Tasks API.
     Returns list of (frame_idx, face_center_x) tuples.
     """
     import mediapipe as mp
 
-    mp_face = mp.solutions.face_detection
-    detector = mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+    model_path = str(PROJECT_ROOT / "assets" / "blaze_face_short_range.tflite")
+    base_options = mp.tasks.BaseOptions(model_asset_path=model_path)
+    options = mp.tasks.vision.FaceDetectorOptions(
+        base_options=base_options,
+        min_detection_confidence=0.5,
+    )
+    detector = mp.tasks.vision.FaceDetector.create_from_options(options)
 
     cap = cv2.VideoCapture(episode_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
@@ -74,14 +79,13 @@ def detect_face_positions(episode_path: str, start_sec: float, end_sec: float, s
 
         if frame_idx % SAMPLE_EVERY_N_FRAMES == 0:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = detector.process(rgb)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            results = detector.detect(mp_image)
 
             if results.detections:
-                # Use the largest/most confident face
-                best = max(results.detections, key=lambda d: d.score[0])
-                bbox = best.location_data.relative_bounding_box
-                # Face center X in pixels
-                face_cx = int((bbox.xmin + bbox.width / 2) * src_w)
+                best = max(results.detections, key=lambda d: d.categories[0].score)
+                bbox = best.bounding_box
+                face_cx = bbox.origin_x + bbox.width // 2
                 positions.append((frame_idx, face_cx))
             else:
                 positions.append((frame_idx, None))
