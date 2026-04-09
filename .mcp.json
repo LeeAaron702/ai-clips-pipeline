@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "video-agent": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/lee/Projects/tiktok-pipeline/mcp-video-agent",
+        "run",
+        "python",
+        "main.py"
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "phase": "growth",
+  "sub_1k": true,
+  "follower_count": 341,
+  "last_follower_check": null,
+  "auto_switched_at": null,
+  "posting": {
+    "timezone": "America/Los_Angeles",
+    "growth_times": ["08:30", "17:30"],
+    "monetization_times": ["08:30", "12:30", "17:30"],
+    "jitter_seconds": [30, 120]
+  },
+  "tiktok": {
+    "account": "@stigscloset",
+    "cookies_path": "./cookies.json",
+    "headless": false
+  },
+  "captions": {
+    "highlight_color": [255, 255, 0],
+    "font_size": 48,
+    "position": "bottom",
+    "style": "tiktok"
+  },
+  "budget": {
+    "monthly_limit_usd": 25.00,
+    "current_month": "2026-04",
+    "spent_usd": 0.00
+  }
+}

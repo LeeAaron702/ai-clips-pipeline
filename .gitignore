@@ -1,0 +1,13 @@
+*.pyc
+__pycache__/
+.env
+cookies.json
+cookies_pw.json
+cookies.txt
+.DS_Store
+*.db
+output/
+input/episodes/
+assets/trending_audio/
+data/transcripts/
+.venv/
