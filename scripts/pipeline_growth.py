@@ -166,7 +166,7 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
 
         db.execute("""
             INSERT INTO videos (script_id, video_path, trending_video_path, duration_seconds, status, content_type, source_episode, clip_start_sec, clip_end_sec, cost_usd, trending_track, top_hook)
-            VALUES (?, ?, ?, ?, 'ready', 'clip', ?, ?, ?, 0.0)
+            VALUES (?, ?, ?, ?, 'ready', 'clip', ?, ?, ?, 0.0, ?, ?)
         """, (
             script_id,
             str(captioned_path),
