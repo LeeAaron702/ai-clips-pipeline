@@ -147,7 +147,28 @@ def generate_hook_heuristic(words: list[dict], episode_name: str = "") -> str:
     if presenter:
         return f"{presenter} WASN'T READY FOR THIS"
 
-    return "YOU NEED TO SEE THIS..."
+    import hashlib
+    # Rotate through varied fallbacks based on transcript content
+    fallbacks = [
+        "THIS DOESN"T END WELL...",
+        "NOBODY SAW THIS COMING",
+        "THINGS ARE ABOUT TO GO WRONG",
+        "THIS IS WHERE IT GETS GOOD",
+        "WATCH WHAT HAPPENS NEXT",
+        "YOU WON"T BELIEVE THIS",
+        "THEY HAD NO IDEA...",
+        "THIS CHANGES EVERYTHING",
+        "ABSOLUTE CHAOS INCOMING",
+        "THE MOMENT IT ALL WENT WRONG",
+        "THIS IS WHY WE LOVE TOP GEAR",
+        "PEAK TOP GEAR RIGHT HERE",
+        "THREE IDIOTS, ONE CHALLENGE",
+        "WHEN IT GOES SIDEWAYS...",
+        "THE LOOK ON THEIR FACES",
+    ]
+    # Pick deterministically based on transcript so same clip always gets same hook
+    text_hash = int(hashlib.md5(" ".join(w["word"].strip() for w in words[:20]).encode()).hexdigest(), 16)
+    return fallbacks[text_hash % len(fallbacks)]
 
 
 CLAUDE_PATH = "/Users/hermes/.local/bin/claude"
