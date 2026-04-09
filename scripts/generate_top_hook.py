@@ -150,8 +150,52 @@ def generate_hook_heuristic(words: list[dict], episode_name: str = "") -> str:
     return "YOU NEED TO SEE THIS..."
 
 
+CLAUDE_PATH = "/Users/hermes/.local/bin/claude"
+
+HOOK_PROMPT = """Generate a short TikTok hook caption (max 6 words, ALL CAPS) for this clip.
+This hook stays pinned at the TOP of the screen the entire video.
+
+RULES:
+- MAX 6 words. Shorter is better.
+- ALL CAPS always.
+- Create curiosity gap - hint without revealing
+- Use emotional triggers: shock, humor, disbelief, danger
+- Reference SPECIFIC people/events, not generic phrases
+- NEVER spoil the payoff
+- Return ONLY the hook text. No quotes, no explanation."""
+
+
+def generate_hook_with_claude(transcript_text: str, episode_name: str = "") -> str:
+    """Use Claude Code (Opus 4.6) to generate hook."""
+    import subprocess
+    prompt = f"{HOOK_PROMPT}\n\nEPISODE: {episode_name}\nTRANSCRIPT:\n{transcript_text}\n\nHook:"
+    try:
+        result = subprocess.run(
+            [CLAUDE_PATH, "-p", prompt, "--model", "opus"],
+            capture_output=True, text=True, timeout=45,
+            cwd=str(PROJECT_ROOT),
+        )
+        if result.returncode == 0:
+            hook = result.stdout.strip().strip('"\'').upper()
+            words = hook.split()
+            if len(words) > 7:
+                hook = " ".join(words[:6]) + "..."
+            if hook and len(hook) > 3:
+                return hook
+    except Exception as e:
+        print(f"  Claude hook gen failed: {e}")
+    return None
+
+
 def generate_hook_from_transcript(words: list[dict], episode_name: str = "", clip_num: int = 0) -> str:
-    """Generate hook from transcript."""
+    """Generate hook - tries Claude Code Opus first, falls back to heuristic."""
+    transcript_text = " ".join(w["word"].strip() for w in words[:50])
+
+    hook = generate_hook_with_claude(transcript_text, episode_name)
+    if hook:
+        print(f"  Hook (Opus): {hook}")
+        return hook
+
     hook = generate_hook_heuristic(words, episode_name)
-    print(f"  Hook: {hook}")
+    print(f"  Hook (heuristic): {hook}")
     return hook
