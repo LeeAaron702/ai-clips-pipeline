@@ -123,12 +123,41 @@ def score_segment(segment: dict, prev_segment: dict = None, next_segment: dict =
     return score
 
 
+def _text_ends_sentence(text: str) -> bool:
+    """Check if text ends at a sentence boundary (period, question mark, exclamation)."""
+    stripped = text.rstrip()
+    return stripped.endswith((".", "?", "!"))
+
+
+def _find_sentence_end_time(segment: dict) -> float | None:
+    """
+    Find the timestamp of the last sentence-ending word in a segment using
+    word-level timestamps.  Returns the end time of that word, or None if
+    the segment has no word-level data or no sentence-ender.
+    """
+    words = segment.get("words", [])
+    if not words:
+        return None
+    # Walk backwards through words looking for one that ends a sentence
+    for w in reversed(words):
+        word_text = w.get("word", "").rstrip()
+        if word_text.endswith((".", "?", "!")):
+            return w["end"]
+    return None
+
+
 def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration: tuple = (12, 45)) -> dict:
     """
     Find natural clip boundaries around a high-scoring segment.
     Target 15-30s for growth phase (better completion rates).
+
+    Clips are extended to the nearest sentence boundary so speakers are not
+    cut off mid-sentence.  Hard max is 55s to stay TikTok-friendly.
+    A 0.3s silence buffer is added after the last word.
     """
     min_dur, max_dur = target_duration
+    HARD_MAX = 55  # absolute ceiling including sentence extension
+    SILENCE_BUFFER = 0.3  # breathing room after last word
 
     start_idx = center_idx
     end_idx = center_idx
@@ -155,13 +184,41 @@ def find_clip_boundaries(segments: list[dict], center_idx: int, target_duration:
             break
         end_idx = candidate
 
+    # --- Sentence-boundary extension ---
+    # If the last segment ends mid-sentence, keep extending until we hit a
+    # sentence boundary or the HARD_MAX duration ceiling.
+    if not _text_ends_sentence(segments[end_idx]["text"]):
+        extended = end_idx
+        while extended < len(segments) - 1:
+            candidate = extended + 1
+            new_end = segments[candidate]["end"]
+            duration = new_end - segments[start_idx]["start"]
+            if duration > HARD_MAX:
+                break
+            extended = candidate
+            if _text_ends_sentence(segments[extended]["text"]):
+                break
+        end_idx = extended
+
+    # Determine precise end time.
+    # If the final segment contains a sentence ender but also trailing words
+    # after it, use word-level timestamps to land exactly on the sentence end.
+    end_sec = segments[end_idx]["end"]
+    if _text_ends_sentence(segments[end_idx]["text"]):
+        sent_end = _find_sentence_end_time(segments[end_idx])
+        if sent_end is not None:
+            end_sec = sent_end
+
+    # Add a small silence buffer so the cut doesn't feel abrupt
+    end_sec += SILENCE_BUFFER
+
     clip_segments = segments[start_idx:end_idx + 1]
     full_text = " ".join(s["text"] for s in clip_segments)
 
     return {
         "start_sec": segments[start_idx]["start"],
-        "end_sec": segments[end_idx]["end"],
-        "duration": segments[end_idx]["end"] - segments[start_idx]["start"],
+        "end_sec": end_sec,
+        "duration": end_sec - segments[start_idx]["start"],
         "text_preview": full_text[:150],
         "segment_indices": (start_idx, end_idx),
         "score": sum(score_segment(s) for s in clip_segments),

@@ -16,7 +16,7 @@ import json
 import os
 import sqlite3
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -106,6 +106,34 @@ def get_scheduler_pid():
         return None
 
 
+
+
+def fmt_time(iso_str):
+    """Convert ISO timestamp or datetime string to 'Apr 09 4:30 PM' format in PT."""
+    if not iso_str or iso_str == "?" or iso_str == "never":
+        return iso_str or "-"
+    try:
+        # Handle various formats
+        s = iso_str.strip()
+        if "T" in s:
+            dt = datetime.fromisoformat(s)
+        else:
+            dt = datetime.strptime(s[:16], "%Y-%m-%d %H:%M")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ)
+        else:
+            dt = dt.astimezone(TZ)
+        now = datetime.now(TZ)
+        if dt.date() == now.date():
+            return dt.strftime("Today %-I:%M %p")
+        elif dt.date() == (now - timedelta(days=1)).date():
+            return dt.strftime("Yesterday %-I:%M %p")
+        elif dt.date() == (now + timedelta(days=1)).date():
+            return dt.strftime("Tmrw %-I:%M %p")
+        else:
+            return dt.strftime("%b %-d %-I:%M %p")
+    except Exception:
+        return iso_str[:16] if len(iso_str) > 16 else iso_str
 
 def get_scheduled_times(queue_size):
     """Calculate the scheduled post time for each clip in the queue."""
@@ -239,7 +267,7 @@ def build_dashboard():
             <td>{name}</td>
             <td>{ep['clips_extracted']}</td>
             <td>{ep['clips_posted']}</td>
-            <td>{ep['processed_at'][:16] if ep['processed_at'] else '-'}</td>
+            <td>{fmt_time(ep['processed_at']) if ep['processed_at'] else '-'}</td>
         </tr>"""
 
     queue_rows = ""
@@ -258,7 +286,7 @@ def build_dashboard():
     for r in recent:
         ep = Path(r["source_episode"]).stem if r["source_episode"] else "?"
         hook = html.escape(r["top_hook"] or r["hook_text"] or "-")[:50]
-        posted_at = r["posted_at"][:16] if r["posted_at"] else "-"
+        posted_at = fmt_time(r["posted_at"]) if r["posted_at"] else "-"
         recent_rows += f"""<tr>
             <td>{r['id']}</td>
             <td>{ep[:30]}</td>
@@ -276,7 +304,7 @@ def build_dashboard():
 
     # TikTok template vars
     tt_user = tiktok_stats.get("username", "stigscloset")
-    tt_time = tiktok_stats.get("fetched_at", "?")[:16] if tiktok_stats.get("fetched_at") else "?"
+    tt_time = fmt_time(tiktok_stats.get("fetched_at", "?")) if tiktok_stats.get("fetched_at") else "?"
     tt_followers = tiktok_stats.get("followers", "?")
     tt_likes = tiktok_stats.get("likes", "?")
     tt_followers_card = stat_card("Followers", f"{tt_followers:,}" if isinstance(tt_followers, int) else "?", "#fe2c55")
@@ -337,7 +365,7 @@ def build_dashboard():
     <div class="status-item"><strong>Scheduler:</strong> {status_dot(sched_pid is not None)}{f' (PID {sched_pid})' if sched_pid else ''}</div>
     <div class="status-item"><strong>State:</strong> {sched_state}</div>
     <div class="status-item"><strong>Next Post:</strong> <span style="color:#ffb74d;font-weight:bold">{next_post}</span> <span id="countdown" style="color:#8b949e;font-size:0.85em"></span></div>
-    <div class="status-item"><strong>Last Post:</strong> {sched.get("last_post", "never")[:16] if sched.get("last_post") else "never"}</div>
+    <div class="status-item"><strong>Last Post:</strong> {fmt_time(sched.get("last_post")) if sched.get("last_post") else "never"}</div>
 </div>
 
 <div class="cards">
@@ -396,7 +424,7 @@ def build_dashboard():
 </div>
 
 <div style="text-align:center; color:#8b949e; font-size:0.7em; margin-top:30px; padding-top:12px; border-top:1px solid #21262d;">
-    ai-clips-pipeline &middot; hermes &middot; refreshed {now.strftime('%H:%M:%S PT')}
+    ai-clips-pipeline &middot; hermes &middot; refreshed {now.strftime('%-I:%M:%S %p PT')}
 </div>
 
 

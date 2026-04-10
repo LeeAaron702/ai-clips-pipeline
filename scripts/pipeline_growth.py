@@ -125,7 +125,7 @@ def process_episode(episode_path: str, max_clips: int = 12) -> list[dict]:
         clip_num = i + 1
         top_hook = generate_hook_from_transcript(words, episode_name, clip_num)
         # Generate AI post caption + hashtags
-        post_caption = generate_post_caption(words, episode_name, top_hook)
+        post_caption = generate_post_caption(words, episode_name, top_hook, clip_num=clip_num)
 
         caption_result = add_captions(str(clip_path), words, str(captioned_path), top_hook=top_hook)
 
